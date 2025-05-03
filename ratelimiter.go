@@ -45,27 +45,27 @@ func (r *RateLimiter) AllowWithContext(ctx context.Context, key string) bool {
 	windowStart := now - r.windowSize.Nanoseconds()
 
 	luaScript := `
-		local key = KEYS[1]
-		local now = tonumber(ARGV[1])
-		local windowStart = tonumber(ARGV[2])
-		local maxRequests = tonumber(ARGV[3])
-		local ttl = tonumber(ARGV[4])
-		
-		-- Добавляем текущий запрос в отсортированный набор с меткой времени
-		redis.call('ZADD', key, now, now .. '-' .. math.random())
-		
-		-- Удаляем все записи старше окна (очистка старых записей)
-		redis.call('ZREMRANGEBYSCORE', key, 0, windowStart)
-		
-		-- Получаем количество запросов в текущем окне
-		local count = redis.call('ZCARD', key)
-		
-		-- Устанавливаем TTL для автоматической очистки
-		redis.call('EXPIRE', key, ttl)
-		
-		-- Возвращаем количество запросов и флаг допустимости
-		return {count, count <= maxRequests}
-	`
+        local key = KEYS[1]
+        local now = tonumber(ARGV[1])
+        local windowStart = tonumber(ARGV[2])
+        local maxRequests = tonumber(ARGV[3])
+        local ttl = tonumber(ARGV[4])
+        
+        -- Добавляем текущий запрос в отсортированный набор с меткой времени
+        redis.call('ZADD', key, now, now .. '-' .. math.random())
+        
+        -- Удаляем все записи старше окна (очистка старых записей)
+        redis.call('ZREMRANGEBYSCORE', key, 0, windowStart)
+        
+        -- Получаем количество запросов в текущем окне
+        local count = redis.call('ZCARD', key)
+        
+        -- Устанавливаем TTL для автоматической очистки
+        redis.call('EXPIRE', key, ttl)
+        
+        -- Возвращаем количество запросов и флаг допустимости
+        return {count, count <= maxRequests}
+    `
 
 	res, err := r.redisClient.Eval(
 		ctx,
@@ -77,22 +77,22 @@ func (r *RateLimiter) AllowWithContext(ctx context.Context, key string) bool {
 		int(r.windowSize.Seconds()),
 	).Result()
 
-	// Если произошла ошибка Redis, пропускаем запрос
+	// Если произошла ошибка Redis, запрещаем запрос для безопасности
 	if err != nil {
-		return true
+		return false
 	}
 
 	results, ok := res.([]interface{})
-	if !ok || len(results) < 2 {
-		return true
+	if !ok || len(results) != 2 {
+		return false
 	}
 
-	allowed, ok := results[1].(bool)
+	allowed, ok := results[1].(int64)
 	if !ok {
-		return true
+		return false
 	}
 
-	return allowed
+	return allowed == 1
 }
 
 // Reset сбрасывает счетчик для указанного ключа
