@@ -51,20 +51,25 @@ func (r *RateLimiter) AllowWithContext(ctx context.Context, key string) bool {
         local maxRequests = tonumber(ARGV[3])
         local ttl = tonumber(ARGV[4])
         
-        -- Добавляем текущий запрос в отсортированный набор с меткой времени
-        redis.call('ZADD', key, now, now .. '-' .. math.random())
-        
         -- Удаляем все записи старше окна (очистка старых записей)
         redis.call('ZREMRANGEBYSCORE', key, 0, windowStart)
         
         -- Получаем количество запросов в текущем окне
         local count = redis.call('ZCARD', key)
         
+        -- Проверяем, можем ли мы добавить еще один запрос
+        if count >= maxRequests then
+            return {count, 0}  -- Превышен лимит
+        end
+        
+        -- Добавляем текущий запрос в отсортированный набор с меткой времени
+        redis.call('ZADD', key, now, now .. '-' .. math.random())
+        
         -- Устанавливаем TTL для автоматической очистки
         redis.call('EXPIRE', key, ttl)
         
         -- Возвращаем количество запросов и флаг допустимости
-        return {count, count <= maxRequests}
+        return {count + 1, 1}
     `
 
 	res, err := r.redisClient.Eval(
@@ -128,8 +133,9 @@ func (r *RateLimiter) RemainingWithContext(ctx context.Context, key string) (int
 		-- Получаем текущее количество
 		local currentCount = redis.call('ZCARD', key)
 		
-		-- Возвращаем оставшееся количество
-		return maxRequests - currentCount
+		-- Возвращаем оставшееся количество (не меньше 0)
+		local remaining = maxRequests - currentCount
+		return remaining > 0 and remaining or 0
 	`
 
 	res, err := r.redisClient.Eval(
